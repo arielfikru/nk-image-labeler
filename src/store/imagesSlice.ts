@@ -41,7 +41,13 @@ export const imagesSlice = createSlice({
     updateLabel: (state, action: PayloadAction<{ imageId: string, label: Label }>) => {
       const image = state.images.find(img => img.id === action.payload.imageId)
       if (image) {
-        image.labels = [action.payload.label]
+        image.labels.push(action.payload.label)
+      }
+    },
+    updateLabels: (state, action: PayloadAction<{ imageId: string, labels: Label[] }>) => {
+      const image = state.images.find(img => img.id === action.payload.imageId)
+      if (image) {
+        image.labels = action.payload.labels
       }
     },
     setCurrentImageIndex: (state, action: PayloadAction<number>) => {
@@ -50,6 +56,6 @@ export const imagesSlice = createSlice({
   },
 })
 
-export const { addImages, deleteImage, updateLabel, setCurrentImageIndex } = imagesSlice.actions
+export const { addImages, deleteImage, updateLabel, updateLabels, setCurrentImageIndex } = imagesSlice.actions
 
 export default imagesSlice.reducer

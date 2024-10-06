@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import { useRouter } from "next/navigation";
 import { RootState } from "@/store";
-import { updateLabel, setCurrentImageIndex } from "@/store/imagesSlice";
+import { updateLabels, setCurrentImageIndex } from "@/store/imagesSlice";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -27,7 +27,7 @@ export default function Labeling() {
   const dispatch = useDispatch();
   const router = useRouter();
 
-  const [boxSize, setBoxSize] = useState(50);
+  const [boxSize, setBoxSize] = useState({ width: 50, height: 50 });
   const [boxPosition, setBoxPosition] = useState<{
     x: number;
     y: number;
@@ -37,6 +37,10 @@ export default function Labeling() {
   const [canvasSize, setCanvasSize] = useState({ width: 400, height: 400 });
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [imagePosition, setImagePosition] = useState({ x: 0, y: 0 });
+  const [isCtrlPressed, setIsCtrlPressed] = useState(false);
+  const [isShiftPressed, setIsShiftPressed] = useState(false);
+  const [lastMousePosition, setLastMousePosition] = useState<{ x: number, y: number } | null>(null);
+  const [hoveredLabelIndex, setHoveredLabelIndex] = useState<number | null>(null);
 
   useEffect(() => {
     const handleResize = () => {
@@ -68,10 +72,11 @@ export default function Labeling() {
           e.clientY <= canvasRect.bottom
         ) {
           e.preventDefault();
-          setBoxSize((prev) => {
-            const newSize = prev - Math.sign(e.deltaY) * 20;
-            return Math.max(10, Math.min(canvasSize.width, newSize));
-          });
+          const scaleFactor = 1 - Math.sign(e.deltaY) * 0.1;
+          setBoxSize((prev) => ({
+            width: Math.round(Math.max(10, Math.min(canvasSize.width, prev.width * scaleFactor))),
+            height: Math.round(Math.max(10, Math.min(canvasSize.height, prev.height * scaleFactor))),
+          }));
         }
         else if (
           e.clientX >= imageMapRect.left &&
@@ -92,10 +97,37 @@ export default function Labeling() {
   }, [canvasSize]);
 
   useEffect(() => {
-    drawImageAndLabel();
-  }, [currentIndex, images, canvasSize]);
+    drawImageAndLabels();
+  }, [currentIndex, images, canvasSize, hoveredLabelIndex]);
 
-  const drawImageAndLabel = () => {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Control') {
+        setIsCtrlPressed(true);
+      } else if (e.key === 'Shift') {
+        setIsShiftPressed(true);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Control') {
+        setIsCtrlPressed(false);
+        setLastMousePosition(null);
+      } else if (e.key === 'Shift') {
+        setIsShiftPressed(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+
+  const drawImageAndLabels = () => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
 
@@ -118,9 +150,9 @@ export default function Labeling() {
 
         ctx.drawImage(img, x, y, width, height);
 
-        const label = images[currentIndex].labels[0];
-        if (label) {
-          ctx.strokeStyle = "blue";
+        images[currentIndex].labels.forEach((label, index) => {
+          const color = getColorForLabel(index);
+          ctx.strokeStyle = color;
           ctx.lineWidth = 2;
           ctx.strokeRect(
             x + label.x * scale,
@@ -128,10 +160,33 @@ export default function Labeling() {
             label.width * scale,
             label.height * scale
           );
-        }
+
+          if (index === hoveredLabelIndex) {
+            // Draw delete button
+            const buttonSize = 20;
+            const buttonX = x + (label.x + label.width) * scale - buttonSize / 2;
+            const buttonY = y + label.y * scale - buttonSize / 2;
+            
+            ctx.fillStyle = 'red';
+            ctx.beginPath();
+            ctx.arc(buttonX + buttonSize / 2, buttonY + buttonSize / 2, buttonSize / 2, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            ctx.fillStyle = 'white';
+            ctx.font = '16px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('×', buttonX + buttonSize / 2, buttonY + buttonSize / 2);
+          }
+        });
       };
       img.src = images[currentIndex].data;
     }
+  };
+
+  const getColorForLabel = (index: number) => {
+    const colors = ['blue', 'red', 'green', 'yellow', 'purple', 'orange'];
+    return colors[index % colors.length];
   };
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -141,6 +196,27 @@ export default function Labeling() {
       const clickX = e.clientX - rect.left
       const clickY = e.clientY - rect.top
   
+      // Check if delete button is clicked
+      const clickedLabelIndex = images[currentIndex].labels.findIndex((label, index) => {
+        if (index !== hoveredLabelIndex) return false;
+        const scale = imageSize.width / images[currentIndex].width;
+        const buttonSize = 20;
+        const buttonX = imagePosition.x + (label.x + label.width) * scale - buttonSize / 2;
+        const buttonY = imagePosition.y + label.y * scale - buttonSize / 2;
+        
+        return (
+          clickX >= buttonX &&
+          clickX <= buttonX + buttonSize &&
+          clickY >= buttonY &&
+          clickY <= buttonY + buttonSize
+        );
+      });
+
+      if (clickedLabelIndex !== -1) {
+        handleLabelDelete(clickedLabelIndex);
+        return;
+      }
+  
       if (
         clickX >= imagePosition.x &&
         clickX <= imagePosition.x + imageSize.width &&
@@ -148,10 +224,10 @@ export default function Labeling() {
         clickY <= imagePosition.y + imageSize.height
       ) {
         const scale = imageSize.width / images[currentIndex].width
-        const labelX = ((clickX - imagePosition.x) / scale) - (boxSize / (2 * scale))
-        const labelY = ((clickY - imagePosition.y) / scale) - (boxSize / (2 * scale))
-        const labelWidth = boxSize / scale
-        const labelHeight = boxSize / scale
+        const labelX = ((clickX - imagePosition.x) / scale) - (boxSize.width / (2 * scale))
+        const labelY = ((clickY - imagePosition.y) / scale) - (boxSize.height / (2 * scale))
+        const labelWidth = boxSize.width / scale
+        const labelHeight = boxSize.height / scale
   
         const newLabel: Label = {
           x: labelX,
@@ -160,34 +236,67 @@ export default function Labeling() {
           height: labelHeight
         }
   
-        dispatch(updateLabel({
+        const updatedLabels = [...images[currentIndex].labels, newLabel];
+  
+        dispatch(updateLabels({
           imageId: images[currentIndex].id,
-          label: newLabel
+          labels: updatedLabels
         }))
   
-        drawImageAndLabel()
+        drawImageAndLabels()
   
-        if (currentIndex === images.length - 1) {
-          toast({
-            description: "Semua image sudah dilabel!",
-            duration: 1000,
-          })
-        } else {
-          dispatch(setCurrentImageIndex(currentIndex + 1))
+        if (!isShiftPressed) {
+          if (currentIndex === images.length - 1) {
+            toast({
+              description: "Semua image sudah dilabel!",
+              duration: 1000,
+            })
+          } else {
+            dispatch(setCurrentImageIndex(currentIndex + 1))
+          }
         }
       }
     }
   };
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (canvas) {
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      setBoxPosition({ x, y });
+
+      if (!isCtrlPressed) {
+        setBoxPosition({ x, y });
+
+        // Check if mouse is over a label
+        const scale = imageSize.width / images[currentIndex].width;
+        const hoveredIndex = images[currentIndex].labels.findIndex((label) => {
+          const labelX = imagePosition.x + label.x * scale;
+          const labelY = imagePosition.y + label.y * scale;
+          const labelWidth = label.width * scale;
+          const labelHeight = label.height * scale;
+          return (
+            x >= labelX &&
+            x <= labelX + labelWidth &&
+            y >= labelY &&
+            y <= labelY + labelHeight
+          );
+        });
+        setHoveredLabelIndex(hoveredIndex !== -1 ? hoveredIndex : null);
+      } else {
+        if (lastMousePosition) {
+          const dx = x - lastMousePosition.x;
+          const dy = lastMousePosition.y - y; // Inverting the y-axis
+          setBoxSize((prev) => ({
+            width: Math.round(Math.max(10, Math.min(canvasSize.width, prev.width + dx))),
+            height: Math.round(Math.max(10, Math.min(canvasSize.height, prev.height + dy))),
+          }));
+        }
+        setLastMousePosition({ x, y });
+      }
     }
-  };
+  }, [isCtrlPressed, lastMousePosition, canvasSize, images, currentIndex, imagePosition, imageSize]);
 
   const handleImageSelect = (index: number) => {
     dispatch(setCurrentImageIndex(index));
@@ -211,6 +320,27 @@ export default function Labeling() {
 
   const handleBackToGallery = () => {
     router.push("/gallery");
+  };
+
+  const handleLabelHover = (index: number | null) => {
+    setHoveredLabelIndex(index);
+  };
+
+  const handleLabelDelete = (index: number) => {
+    const updatedLabels = images[currentIndex].labels.filter((_, i) => i !== index);
+    dispatch(updateLabels({
+      imageId: images[currentIndex].id,
+      labels: updatedLabels
+    }));
+    setHoveredLabelIndex(null);
+  };
+
+  const handleClearAllLabels = () => {
+    dispatch(updateLabels({
+      imageId: images[currentIndex].id,
+      labels: []
+    }));
+    setHoveredLabelIndex(null);
   };
 
   return (
@@ -269,10 +399,10 @@ export default function Labeling() {
                 <div
                   style={{
                     position: "absolute",
-                    left: boxPosition.x - boxSize / 2,
-                    top: boxPosition.y - boxSize / 2,
-                    width: boxSize,
-                    height: boxSize,
+                    left: boxPosition.x - boxSize.width / 2,
+                    top: boxPosition.y - boxSize.height / 2,
+                    width: boxSize.width,
+                    height: boxSize.height,
                     border: "2px solid red",
                     pointerEvents: "none",
                   }}
@@ -286,29 +416,99 @@ export default function Labeling() {
           </>
         )}
       </div>
-      <div className="w-64 ml-4">
+      <div className="w-64 ml-4 flex flex-col h-screen">
         <Button onClick={handleFinish} className="w-full mb-4">Finish Labeling</Button>
-        <Card className="sticky top-4 self-start max-h-[calc(100vh-6rem)] overflow-hidden">
+        
+        {/* Box Size Settings Card */}
+        <Card className="mb-4">
           <CardContent className="p-4">
             <h2 className="text-xl font-bold mb-4">Box Size Settings</h2>
             <div className="space-y-4">
               <div>
-                <label htmlFor="box-size" className="block text-sm font-medium text-gray-700 mb-1">
-                  Box Size: {boxSize}px
+                <label htmlFor="box-width" className="block text-sm font-medium text-gray-700 mb-1">
+                  Box Width: {boxSize.width}px
                 </label>
                 <Slider
-                  id="box-size"
+                  id="box-width"
                   min={10}
                   max={canvasSize.width}
                   step={1}
-                  value={[boxSize]}
-                  onValueChange={(value) => setBoxSize(value[0])}
+                  value={[boxSize.width]}
+                  onValueChange={(value) => setBoxSize((prev) => ({ ...prev, width: Math.round(value[0]) }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="box-height" className="block text-sm font-medium text-gray-700 mb-1">
+                  Box Height: {boxSize.height}px
+                </label>
+                <Slider
+                  id="box-height"
+                  min={10}
+                  max={canvasSize.height}
+                  step={1}
+                  value={[boxSize.height]}
+                  onValueChange={(value) => setBoxSize((prev) => ({ ...prev, height: Math.round(value[0]) }))}
                 />
               </div>
               <p className="text-sm text-gray-600">
-                Tip: You can use the mouse wheel over the canvas to adjust the box size.
+                Tip: Use mouse wheel over canvas to adjust box size proportionally.
+              </p>
+              <p className="text-sm text-gray-600">
+                Hold CTRL and move mouse to resize width and height separately.
+              </p>
+              <p className="text-sm text-gray-600">
+                Hold SHIFT while clicking to add multiple labels to an image.
               </p>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Bounding Boxes Card */}
+        <Card className="flex-grow overflow-hidden flex flex-col">
+          <CardContent className="p-4 flex flex-col h-full">
+            <h2 className="text-xl font-bold mb-4">Bounding Boxes</h2>
+            <div className="flex-grow overflow-y-auto">
+              {images[currentIndex]?.labels.length === 0 ? (
+                <p className="text-sm text-gray-500">No labels for this image</p>
+              ) : (
+                <div className="space-y-2">
+                  {images[currentIndex]?.labels.map((label, index) => {
+                    const color = getColorForLabel(index);
+                    return (
+                      <div
+                        key={index}
+                        className="flex items-center justify-between p-2 rounded"
+                        style={{ 
+                          backgroundColor: `${color}40`,
+                        }}
+                        onMouseEnter={() => handleLabelHover(index)}
+                        onMouseLeave={() => handleLabelHover(null)}
+                      >
+                        <span style={{ color: 'black' }}>Label {index + 1}</span>
+                        {hoveredLabelIndex === index && (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleLabelDelete(index)}
+                          >
+                            Delete
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            {images[currentIndex]?.labels.length > 0 && (
+              <Button
+                variant="outline"
+                className="w-full mt-4"
+                onClick={handleClearAllLabels}
+              >
+                Clear All Labels
+              </Button>
+            )}
           </CardContent>
         </Card>
       </div>
