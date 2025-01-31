@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
 import JSZip from 'jszip'
 import { FixedSizeGrid as Grid } from 'react-window'
 import AutoSizer from 'react-virtualized-auto-sizer'
@@ -24,6 +23,7 @@ interface Label {
   y: number;
   width: number;
   height: number;
+  class: string;
 }
 
 interface ImageData {
@@ -42,7 +42,6 @@ export default function LabeledGallery() {
   const [downloadType, setDownloadType] = useState<DownloadType>('zip')
   const [imageFormat, setImageFormat] = useState<ImageFormat>('png')
   const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>('full')
-  const [label, setLabel] = useState<string>('')
   const [renderedImages, setRenderedImages] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -68,11 +67,17 @@ export default function LabeledGallery() {
           ctx.drawImage(image, 0, 0)
         
           img.labels.forEach(label => {
-            ctx.fillStyle = 'rgba(0, 0, 255, 0.2)' // Semi-transparent blue
+            const color = 'rgba(0, 0, 255, 0.2)' // Semi-transparent blue
+            ctx.fillStyle = color
             ctx.fillRect(label.x, label.y, label.width, label.height)
             ctx.strokeStyle = 'blue'
             ctx.lineWidth = 2
             ctx.strokeRect(label.x, label.y, label.width, label.height)
+            
+            // Add label class text
+            ctx.fillStyle = 'blue'
+            ctx.font = '14px Arial'
+            ctx.fillText(label.class, label.x, label.y - 5)
           })
         }
         resolve(canvas.toDataURL())
@@ -95,6 +100,13 @@ export default function LabeledGallery() {
   }
 
   const generateCOCOData = (images: ImageData[]): string => {
+    const categories = Array.from(new Set(images.flatMap(img => img.labels.map(label => label.class))))
+      .map((className, index) => ({
+        id: index + 1,
+        name: className,
+        supercategory: "none"
+      }));
+
     const cocoData = {
       images: images.map((img) => ({
         id: parseInt(img.id),
@@ -106,25 +118,28 @@ export default function LabeledGallery() {
         img.labels.map((label, labelIndex) => ({
           id: parseInt(img.id) * 1000 + labelIndex,
           image_id: parseInt(img.id),
-          category_id: 1,
+          category_id: categories.find(cat => cat.name === label.class)?.id,
           bbox: [label.x, label.y, label.width, label.height],
           area: label.width * label.height,
           iscrowd: 0
         }))
       ),
-      categories: [{ id: 1, name: label, supercategory: "none" }]
+      categories: categories
     }
     return JSON.stringify(cocoData, null, 2)
   }
 
   const generateYOLOData = (img: ImageData): string => {
+    const allClasses = Array.from(new Set(images.flatMap(img => img.labels.map(label => label.class))));
+    
     return img.labels.map(label => {
-      const centerX = (label.x + label.width / 2) / img.width
-      const centerY = (label.y + label.height / 2) / img.height
-      const width = label.width / img.width
-      const height = label.height / img.height
-      return `0 ${centerX} ${centerY} ${width} ${height}`
-    }).join('\n')
+      const classIndex = allClasses.indexOf(label.class);
+      const centerX = (label.x + label.width / 2) / img.width;
+      const centerY = (label.y + label.height / 2) / img.height;
+      const width = label.width / img.width;
+      const height = label.height / img.height;
+      return `${classIndex} ${centerX} ${centerY} ${width} ${height}`;
+    }).join('\n');
   }
 
   const handleDownload = async () => {
@@ -147,11 +162,17 @@ export default function LabeledGallery() {
             ctx.drawImage(image, 0, 0)
           
             img.labels.forEach(label => {
-              ctx.fillStyle = 'rgba(0, 0, 255, 0.2)' // Semi-transparent blue
+              const color = 'rgba(0, 0, 255, 0.2)' // Semi-transparent blue
+              ctx.fillStyle = color
               ctx.fillRect(label.x, label.y, label.width, label.height)
               ctx.strokeStyle = 'blue'
               ctx.lineWidth = 2
               ctx.strokeRect(label.x, label.y, label.width, label.height)
+              
+              // Add label class text
+              ctx.fillStyle = 'blue'
+              ctx.font = '14px Arial'
+              ctx.fillText(label.class, label.x, label.y - 5)
             })
           }
 
@@ -165,7 +186,7 @@ export default function LabeledGallery() {
               ctx.drawImage(image, label.x, label.y, label.width, label.height, 0, 0, label.width, label.height)
             }
             const dataUrl = getImageDataUrl(canvas, imageFormat)
-            zip.file(`${img.name.split('.')[0]}_crop_${labelIndex + 1}.${imageFormat}`, dataUrl.split(',')[1], {base64: true})
+            zip.file(`${img.name.split('.')[0]}_${label.class}_${labelIndex + 1}.${imageFormat}`, dataUrl.split(',')[1], {base64: true})
           })
         }
       }))
@@ -175,7 +196,16 @@ export default function LabeledGallery() {
       images.forEach((img) => {
         zip.file(`images/${img.name}`, img.data.split(',')[1], {base64: true})
       })
+
+      // Add classes.txt for reference
+      const allClasses = Array.from(new Set(images.flatMap(img => img.labels.map(label => label.class))));
+      zip.file('classes.txt', allClasses.join('\n'))
     } else if (exportFormat === 'yolo') {
+      // Create classes.txt first
+      const allClasses = Array.from(new Set(images.flatMap(img => img.labels.map(label => label.class))));
+      zip.file('classes.txt', allClasses.join('\n'))
+
+      // Add image and label files
       images.forEach((img) => {
         const yoloData = generateYOLOData(img)
         zip.file(`labels/${img.name.split('.')[0]}.txt`, yoloData)
@@ -221,7 +251,7 @@ export default function LabeledGallery() {
                 alt={images[index].name} 
                 fill
                 className="object-contain"
-                unoptimized // Since we're using data URLs
+                unoptimized
               />
             </div>
           </div>
@@ -239,7 +269,7 @@ export default function LabeledGallery() {
     <div className="container mx-auto p-4">
       <div className="flex items-center mb-4">
         <Button onClick={handleBack} className="mr-4">Back</Button>
-        <h1 className="text-2xl font-bold">Export Image</h1>
+        <h1 className="text-2xl font-bold">Export Images</h1>
       </div>
       <div className="flex flex-col md:flex-row">
         <div className="md:w-3/4 pr-4">
@@ -321,21 +351,9 @@ export default function LabeledGallery() {
                 />
                 <label htmlFor="downloadType">Download as ZIP</label>
               </div>
-              {(exportFormat === 'coco' || exportFormat === 'yolo') && (
-                <div className="flex flex-col space-y-2">
-                  <label htmlFor="label">Label:</label>
-                  <Input 
-                    id="label" 
-                    value={label} 
-                    onChange={(e) => setLabel(e.target.value)} 
-                    placeholder="Enter label for COCO/YOLO"
-                  />
-                </div>
-              )}
               <Button 
                 onClick={handleDownload} 
-                className="w-full" 
-                disabled={(exportFormat === 'coco' || exportFormat === 'yolo') && !label}
+                className="w-full"
               >
                 Download
               </Button>

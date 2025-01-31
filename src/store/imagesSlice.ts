@@ -1,5 +1,3 @@
-// nk-image-labeler\src\store\imagesSlice.ts
-
 import { createSlice, PayloadAction } from '@reduxjs/toolkit'
 
 interface Label {
@@ -7,6 +5,7 @@ interface Label {
   y: number;
   width: number;
   height: number;
+  class: string;
 }
 
 interface ImageData {
@@ -21,11 +20,13 @@ interface ImageData {
 interface ImagesState {
   images: ImageData[];
   currentImageIndex: number;
+  labelClasses: string[];
 }
 
 const initialState: ImagesState = {
   images: [],
   currentImageIndex: 0,
+  labelClasses: [],
 }
 
 export const imagesSlice = createSlice({
@@ -53,9 +54,40 @@ export const imagesSlice = createSlice({
     setCurrentImageIndex: (state, action: PayloadAction<number>) => {
       state.currentImageIndex = action.payload
     },
+    addLabelClass: (state, action: PayloadAction<string>) => {
+      if (!state.labelClasses.includes(action.payload)) {
+        state.labelClasses.push(action.payload)
+      }
+    },
+    renameLabelClass: (state, action: PayloadAction<{ oldName: string; newName: string }>) => {
+      const { oldName, newName } = action.payload;
+      
+      // Update the label classes array
+      const classIndex = state.labelClasses.indexOf(oldName);
+      if (classIndex !== -1) {
+        state.labelClasses[classIndex] = newName;
+      }
+
+      // Update all existing labels with this class
+      state.images.forEach(image => {
+        image.labels.forEach(label => {
+          if (label.class === oldName) {
+            label.class = newName;
+          }
+        });
+      });
+    },
   },
 })
 
-export const { addImages, deleteImage, updateLabel, updateLabels, setCurrentImageIndex } = imagesSlice.actions
+export const {
+  addImages,
+  deleteImage,
+  updateLabel,
+  updateLabels,
+  setCurrentImageIndex,
+  addLabelClass,
+  renameLabelClass,
+} = imagesSlice.actions
 
 export default imagesSlice.reducer

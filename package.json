@@ -2,11 +2,11 @@
   "name": "nk-image-labeler",
   "version": "0.1.0",
   "private": true,
-    "scripts": {
-      "dev": "next dev -p 8300",
-      "build": "next build",
-      "start": "next start -p 8300"
-    },
+  "scripts": {
+    "dev": "next dev -p 8300",
+    "build": "next build",
+    "start": "next start -p 8300"
+  },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.1.1",
     "@radix-ui/react-scroll-area": "^1.1.0",
@@ -14,6 +14,7 @@
     "@radix-ui/react-slider": "^1.2.0",
     "@radix-ui/react-slot": "^1.1.0",
     "@radix-ui/react-toast": "^1.2.1",
+    "@radix-ui/react-toggle-group": "^1.1.1",
     "@reduxjs/toolkit": "^2.2.7",
     "@types/react-window": "^1.8.8",
     "class-variance-authority": "^0.7.0",
