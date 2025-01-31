@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
@@ -20,6 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Pencil, MousePointer, Square } from "lucide-react";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
+import { throttle } from "lodash";
 
 interface Label {
   x: number;
@@ -76,91 +77,26 @@ export default function Labeling() {
   const [hoveredLabelIndex, setHoveredLabelIndex] = useState<number | null>(
     null
   );
+  const [activeLabelIndex, setActiveLabelIndex] = useState<number | null>(null);
 
-  useEffect(() => {
-    const handleResize = () => {
-      const size = Math.min(
-        window.innerWidth - 600,
-        window.innerHeight - 200,
-        600
-      );
-      setCanvasSize({ width: size, height: size });
+  // Memoized color function
+  const getColorForLabel = useMemo(() => {
+    return (labelClass: string) => {
+      // Dark color palette
+      const colors = [
+        "#1E40AF", // Dark Blue
+        "#991B1B", // Dark Red
+        "#166534", // Dark Green
+        "#854D0E", // Dark Yellow (Brownish)
+        "#6B21A8", // Dark Purple
+        "#9A3412", // Dark Orange
+      ];
+      const index = labelClasses.indexOf(labelClass) % colors.length;
+      return colors[index];
     };
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  }, [labelClasses]);
 
-  useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      // Ignore key events when typing in input fields
-      if (e.target instanceof HTMLInputElement) return;
-
-      switch (e.key.toLowerCase()) {
-        case "b":
-          setCurrentTool("boundingBox");
-          break;
-        case "v":
-          setCurrentTool("select");
-          break;
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyPress);
-    return () => window.removeEventListener("keydown", handleKeyPress);
-  }, []);
-
-  useEffect(() => {
-    const handleWheel = (e: WheelEvent) => {
-      const canvas = canvasRef.current;
-      const imageMap = imageMapRef.current;
-
-      if (canvas && imageMap) {
-        const canvasRect = canvas.getBoundingClientRect();
-        const imageMapRect = imageMap.getBoundingClientRect();
-
-        if (
-          e.clientX >= canvasRect.left &&
-          e.clientX <= canvasRect.right &&
-          e.clientY >= canvasRect.top &&
-          e.clientY <= canvasRect.bottom
-        ) {
-          e.preventDefault();
-          const scaleFactor = 1 - Math.sign(e.deltaY) * 0.1;
-          setBoxSize((prev) => ({
-            width: Math.round(
-              Math.max(10, Math.min(canvasSize.width, prev.width * scaleFactor))
-            ),
-            height: Math.round(
-              Math.max(
-                10,
-                Math.min(canvasSize.height, prev.height * scaleFactor)
-              )
-            ),
-          }));
-        } else if (
-          e.clientX >= imageMapRect.left &&
-          e.clientX <= imageMapRect.right &&
-          e.clientY >= imageMapRect.top &&
-          e.clientY <= imageMapRect.bottom
-        ) {
-          return;
-        } else {
-          e.preventDefault();
-        }
-      }
-    };
-
-    window.addEventListener("wheel", handleWheel, { passive: false });
-    return () => window.removeEventListener("wheel", handleWheel);
-  }, [canvasSize]);
-
-  const getColorForLabel = (labelClass: string) => {
-    const colors = ["blue", "red", "green", "yellow", "purple", "orange"];
-    const index = labelClasses.indexOf(labelClass) % colors.length;
-    return colors[index];
-  };
-
+  // Memoized draw function
   const drawImageAndLabels = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
@@ -168,10 +104,8 @@ export default function Labeling() {
     if (canvas && ctx && images[currentIndex]) {
       const img = new window.Image();
       img.onload = () => {
-        // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Calculate image scaling and position
         const scale = Math.min(
           canvas.width / img.width,
           canvas.height / img.height
@@ -181,21 +115,42 @@ export default function Labeling() {
         const width = img.width * scale;
         const height = img.height * scale;
 
-        // Update state with image dimensions
         setImageSize({ width, height });
         setImagePosition({ x, y });
 
-        // Draw the main image
+        // Draw the image
         ctx.drawImage(img, x, y, width, height);
+
+        // If there's an active label and select tool is active, add dark overlay
+        if (activeLabelIndex !== null && currentTool === "select") {
+          // Draw semi-transparent dark overlay
+          ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          // Clear the active label area
+          const activeLabel = images[currentIndex].labels[activeLabelIndex];
+          const labelX = x + activeLabel.x * scale;
+          const labelY = y + activeLabel.y * scale;
+          const labelWidth = activeLabel.width * scale;
+          const labelHeight = activeLabel.height * scale;
+
+          ctx.clearRect(labelX, labelY, labelWidth, labelHeight);
+          // Redraw the image portion for the active label
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(labelX, labelY, labelWidth, labelHeight);
+          ctx.clip();
+          ctx.drawImage(img, x, y, width, height);
+          ctx.restore();
+        }
 
         // Draw all labels
         images[currentIndex].labels.forEach((label, index) => {
-          // Get color for current label
           const color = getColorForLabel(label.class);
+          const isActive = index === activeLabelIndex;
 
-          // Draw bounding box
           ctx.strokeStyle = color;
-          ctx.lineWidth = 2;
+          ctx.lineWidth = isActive ? 3 : 2;
           ctx.strokeRect(
             x + label.x * scale,
             y + label.y * scale,
@@ -203,9 +158,9 @@ export default function Labeling() {
             label.height * scale
           );
 
-          // Draw label class text
+          // Draw label text
           ctx.fillStyle = color;
-          ctx.font = "12px Arial";
+          ctx.font = `${isActive ? "bold " : ""}12px Arial`;
           ctx.textAlign = "left";
           ctx.textBaseline = "bottom";
           ctx.fillText(
@@ -214,14 +169,16 @@ export default function Labeling() {
             y + label.y * scale - 5
           );
 
-          // Draw delete button only when label is hovered and select tool is active
-          if (index === hoveredLabelIndex && currentTool === "select") {
+          // Draw delete button if hovered or active
+          if (
+            (index === hoveredLabelIndex || index === activeLabelIndex) &&
+            currentTool === "select"
+          ) {
             const buttonSize = 20;
             const buttonX =
               x + (label.x + label.width) * scale - buttonSize / 2;
             const buttonY = y + label.y * scale - buttonSize / 2;
 
-            // Draw red circle background
             ctx.fillStyle = "red";
             ctx.beginPath();
             ctx.arc(
@@ -233,7 +190,6 @@ export default function Labeling() {
             );
             ctx.fill();
 
-            // Draw white "×" symbol
             ctx.fillStyle = "white";
             ctx.font = "16px Arial";
             ctx.textAlign = "center";
@@ -248,92 +204,72 @@ export default function Labeling() {
       };
       img.src = images[currentIndex].data;
     }
-  }, [currentIndex, images, hoveredLabelIndex, currentTool, getColorForLabel]);
+  }, [
+    currentIndex,
+    images,
+    hoveredLabelIndex,
+    activeLabelIndex,
+    currentTool,
+    getColorForLabel,
+  ]);
 
-  useEffect(() => {
-    drawImageAndLabels();
-  }, [drawImageAndLabels]);
+  // Throttled mouse move handler
+  const throttledMouseMove = useCallback(
+    throttle((e: React.MouseEvent<HTMLCanvasElement>) => {
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Control") {
-        setIsCtrlPressed(true);
-      } else if (e.key === "Shift") {
-        setIsShiftPressed(true);
+        if (!isCtrlPressed) {
+          setBoxPosition({ x, y });
+
+          const scale = imageSize.width / images[currentIndex].width;
+          const hoveredIndex = images[currentIndex].labels.findIndex(
+            (label) => {
+              const labelX = imagePosition.x + label.x * scale;
+              const labelY = imagePosition.y + label.y * scale;
+              const labelWidth = label.width * scale;
+              const labelHeight = label.height * scale;
+              return (
+                x >= labelX &&
+                x <= labelX + labelWidth &&
+                y >= labelY &&
+                y <= labelY + labelHeight
+              );
+            }
+          );
+          setHoveredLabelIndex(hoveredIndex !== -1 ? hoveredIndex : null);
+        } else {
+          if (lastMousePosition) {
+            const dx = x - lastMousePosition.x;
+            const dy = lastMousePosition.y - y;
+            setBoxSize((prev) => ({
+              width: Math.round(
+                Math.max(10, Math.min(canvasSize.width, prev.width + dx))
+              ),
+              height: Math.round(
+                Math.max(10, Math.min(canvasSize.height, prev.height + dy))
+              ),
+            }));
+          }
+          setLastMousePosition({ x, y });
+        }
       }
-    };
+    }, 16),
+    [
+      isCtrlPressed,
+      lastMousePosition,
+      canvasSize,
+      images,
+      currentIndex,
+      imagePosition,
+      imageSize,
+    ]
+  );
 
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "Control") {
-        setIsCtrlPressed(false);
-        setLastMousePosition(null);
-      } else if (e.key === "Shift") {
-        setIsShiftPressed(false);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    window.addEventListener("keyup", handleKeyUp);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      window.removeEventListener("keyup", handleKeyUp);
-    };
-  }, []);
-
-  const getCanvasCursor = () => {
-    if (currentTool === "select") {
-      return hoveredLabelIndex !== null ? "pointer" : "default";
-    }
-    return "crosshair";
-  };
-
-  // const getColorForLabel = (labelClass: string) => {
-  //   const colors = ["blue", "red", "green", "yellow", "purple", "orange"];
-  //   const index = labelClasses.indexOf(labelClass) % colors.length;
-  //   return colors[index];
-  // };
-
-  const handleStartEdit = (labelClass: string) => {
-    setEditClass({
-      isEditing: true,
-      classToEdit: labelClass,
-      newClassName: labelClass,
-    });
-  };
-
-  const handleEndEdit = () => {
-    setEditClass({
-      isEditing: false,
-      classToEdit: "",
-      newClassName: "",
-    });
-  };
-
-  const handleRenameClass = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && editClass.newClassName.trim()) {
-      const newName = editClass.newClassName.trim();
-      const oldName = editClass.classToEdit;
-
-      if (labelClasses.includes(newName) && newName !== oldName) {
-        toast({
-          description: "This class name already exists!",
-          duration: 2000,
-        });
-        return;
-      }
-
-      if (selectedClass === oldName) {
-        setSelectedClass(newName);
-      }
-
-      dispatch(renameLabelClass({ oldName, newName }));
-      handleEndEdit();
-    } else if (e.key === "Escape") {
-      handleEndEdit();
-    }
-  };
-
+  // Canvas click handler
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas || !images[currentIndex]) return;
@@ -343,32 +279,53 @@ export default function Labeling() {
     const clickY = e.clientY - rect.top;
 
     if (currentTool === "select") {
-      // Logika untuk tool select
-      const clickedLabelIndex = images[currentIndex].labels.findIndex(
-        (label, index) => {
-          if (index !== hoveredLabelIndex) return false;
-          const scale = imageSize.width / images[currentIndex].width;
-          const buttonSize = 20;
-          const buttonX =
-            imagePosition.x + (label.x + label.width) * scale - buttonSize / 2;
-          const buttonY = imagePosition.y + label.y * scale - buttonSize / 2;
+      const scale = imageSize.width / images[currentIndex].width;
 
+      // Check if clicked on a label
+      const clickedLabelIndex = images[currentIndex].labels.findIndex(
+        (label) => {
+          const labelX = imagePosition.x + label.x * scale;
+          const labelY = imagePosition.y + label.y * scale;
+          const labelWidth = label.width * scale;
+          const labelHeight = label.height * scale;
           return (
-            clickX >= buttonX &&
-            clickX <= buttonX + buttonSize &&
-            clickY >= buttonY &&
-            clickY <= buttonY + buttonSize
+            clickX >= labelX &&
+            clickX <= labelX + labelWidth &&
+            clickY >= labelY &&
+            clickY <= labelY + labelHeight
           );
         }
       );
 
       if (clickedLabelIndex !== -1) {
-        handleLabelDelete(clickedLabelIndex);
+        // If clicked on delete button
+        const label = images[currentIndex].labels[clickedLabelIndex];
+        const buttonSize = 20;
+        const buttonX =
+          imagePosition.x + (label.x + label.width) * scale - buttonSize / 2;
+        const buttonY = imagePosition.y + label.y * scale - buttonSize / 2;
+
+        if (
+          clickX >= buttonX &&
+          clickX <= buttonX + buttonSize &&
+          clickY >= buttonY &&
+          clickY <= buttonY + buttonSize
+        ) {
+          handleLabelDelete(clickedLabelIndex);
+          setActiveLabelIndex(null);
+        } else {
+          // Toggle active label
+          setActiveLabelIndex(
+            activeLabelIndex === clickedLabelIndex ? null : clickedLabelIndex
+          );
+        }
+      } else {
+        // Clicked outside any label
+        setActiveLabelIndex(null);
       }
       return;
     }
 
-    // Logika untuk tool bounding box
     if (!selectedClass) {
       toast({
         description: "Please select a label class first!",
@@ -423,89 +380,137 @@ export default function Labeling() {
     }
   };
 
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // Use requestAnimationFrame for smooth canvas rendering
+  useEffect(() => {
+    let animationFrameId: number;
+
+    const draw = () => {
+      drawImageAndLabels();
+      animationFrameId = requestAnimationFrame(draw);
+    };
+
+    draw();
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [drawImageAndLabels]);
+
+  // Handle window resize
+  useEffect(() => {
+    const handleResize = () => {
+      const size = Math.min(
+        window.innerWidth - 600,
+        window.innerHeight - 200,
+        600
+      );
+      setCanvasSize({ width: size, height: size });
+    };
+
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  // Handle key events
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement) return;
+
+      switch (e.key.toLowerCase()) {
+        case "b":
+          setCurrentTool("boundingBox");
+          break;
+        case "v":
+          setCurrentTool("select");
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyPress);
+    return () => window.removeEventListener("keydown", handleKeyPress);
+  }, []);
+
+  // Handle wheel events
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
       const canvas = canvasRef.current;
-      if (canvas) {
-        const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+      const imageMap = imageMapRef.current;
 
-        if (!isCtrlPressed) {
-          setBoxPosition({ x, y });
+      if (canvas && imageMap) {
+        const canvasRect = canvas.getBoundingClientRect();
+        const imageMapRect = imageMap.getBoundingClientRect();
 
-          const scale = imageSize.width / images[currentIndex].width;
-          const hoveredIndex = images[currentIndex].labels.findIndex(
-            (label) => {
-              const labelX = imagePosition.x + label.x * scale;
-              const labelY = imagePosition.y + label.y * scale;
-              const labelWidth = label.width * scale;
-              const labelHeight = label.height * scale;
-              return (
-                x >= labelX &&
-                x <= labelX + labelWidth &&
-                y >= labelY &&
-                y <= labelY + labelHeight
-              );
-            }
-          );
-          setHoveredLabelIndex(hoveredIndex !== -1 ? hoveredIndex : null);
+        if (
+          e.clientX >= canvasRect.left &&
+          e.clientX <= canvasRect.right &&
+          e.clientY >= canvasRect.top &&
+          e.clientY <= canvasRect.bottom
+        ) {
+          e.preventDefault();
+          const scaleFactor = 1 - Math.sign(e.deltaY) * 0.1;
+          setBoxSize((prev) => ({
+            width: Math.round(
+              Math.max(10, Math.min(canvasSize.width, prev.width * scaleFactor))
+            ),
+            height: Math.round(
+              Math.max(
+                10,
+                Math.min(canvasSize.height, prev.height * scaleFactor)
+              )
+            ),
+          }));
+        } else if (
+          e.clientX >= imageMapRect.left &&
+          e.clientX <= imageMapRect.right &&
+          e.clientY >= imageMapRect.top &&
+          e.clientY <= imageMapRect.bottom
+        ) {
+          return;
         } else {
-          if (lastMousePosition) {
-            const dx = x - lastMousePosition.x;
-            const dy = lastMousePosition.y - y;
-            setBoxSize((prev) => ({
-              width: Math.round(
-                Math.max(10, Math.min(canvasSize.width, prev.width + dx))
-              ),
-              height: Math.round(
-                Math.max(10, Math.min(canvasSize.height, prev.height + dy))
-              ),
-            }));
-          }
-          setLastMousePosition({ x, y });
+          e.preventDefault();
         }
       }
-    },
-    [
-      isCtrlPressed,
-      lastMousePosition,
-      canvasSize,
-      images,
-      currentIndex,
-      imagePosition,
-      imageSize,
-    ]
-  );
+    };
 
-  const handleImageSelect = (index: number) => {
-    dispatch(setCurrentImageIndex(index));
-  };
+    window.addEventListener("wheel", handleWheel, { passive: false });
+    return () => window.removeEventListener("wheel", handleWheel);
+  }, [canvasSize]);
 
-  const handlePreviousImage = () => {
-    if (currentIndex > 0) {
-      dispatch(setCurrentImageIndex(currentIndex - 1));
-    }
-  };
+  // Handle key down/up events
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Control") {
+        setIsCtrlPressed(true);
+      } else if (e.key === "Shift") {
+        setIsShiftPressed(true);
+      }
+    };
 
-  const handleNextImage = () => {
-    if (currentIndex < images.length - 1) {
-      dispatch(setCurrentImageIndex(currentIndex + 1));
-    }
-  };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "Control") {
+        setIsCtrlPressed(false);
+        setLastMousePosition(null);
+      } else if (e.key === "Shift") {
+        setIsShiftPressed(false);
+      }
+    };
 
-  const handleFinish = () => {
-    router.push("/export");
-  };
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
 
-  const handleBackToGallery = () => {
-    router.push("/gallery");
-  };
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, []);
 
+  // Handle label hover
   const handleLabelHover = (index: number | null) => {
     setHoveredLabelIndex(index);
   };
 
+  // Handle label deletion
   const handleLabelDelete = (index: number) => {
     const updatedLabels = images[currentIndex].labels.filter(
       (_, i) => i !== index
@@ -518,8 +523,10 @@ export default function Labeling() {
     );
 
     setHoveredLabelIndex(null);
+    setActiveLabelIndex(null);
   };
 
+  // Handle clear all labels
   const handleClearAllLabels = () => {
     dispatch(
       updateLabels({
@@ -528,8 +535,17 @@ export default function Labeling() {
       })
     );
     setHoveredLabelIndex(null);
+    setActiveLabelIndex(null);
   };
 
+  // Handle bounding box card click
+  const handleBoundingBoxCardClick = (index: number) => {
+    if (currentTool === "select") {
+      setActiveLabelIndex(activeLabelIndex === index ? null : index);
+    }
+  };
+
+  // Handle add new label class
   const handleAddLabel = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && newLabelInput.trim()) {
       if (!labelClasses.includes(newLabelInput.trim())) {
@@ -538,6 +554,81 @@ export default function Labeling() {
       }
       setNewLabelInput("");
     }
+  };
+
+  // Handle start editing a label class
+  const handleStartEdit = (labelClass: string) => {
+    setEditClass({
+      isEditing: true,
+      classToEdit: labelClass,
+      newClassName: labelClass,
+    });
+  };
+
+  // Handle end editing a label class
+  const handleEndEdit = () => {
+    setEditClass({
+      isEditing: false,
+      classToEdit: "",
+      newClassName: "",
+    });
+  };
+
+  // Handle renaming a label class
+  const handleRenameClass = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && editClass.newClassName.trim()) {
+      const newName = editClass.newClassName.trim();
+      const oldName = editClass.classToEdit;
+
+      if (labelClasses.includes(newName) && newName !== oldName) {
+        toast({
+          description: "This class name already exists!",
+          duration: 2000,
+        });
+        return;
+      }
+
+      if (selectedClass === oldName) {
+        setSelectedClass(newName);
+      }
+
+      dispatch(renameLabelClass({ oldName, newName }));
+      handleEndEdit();
+    } else if (e.key === "Escape") {
+      handleEndEdit();
+    }
+  };
+
+  // Handle image selection
+  const handleImageSelect = (index: number) => {
+    dispatch(setCurrentImageIndex(index));
+    setActiveLabelIndex(null);
+  };
+
+  // Handle previous image
+  const handlePreviousImage = () => {
+    if (currentIndex > 0) {
+      dispatch(setCurrentImageIndex(currentIndex - 1));
+      setActiveLabelIndex(null);
+    }
+  };
+
+  // Handle next image
+  const handleNextImage = () => {
+    if (currentIndex < images.length - 1) {
+      dispatch(setCurrentImageIndex(currentIndex + 1));
+      setActiveLabelIndex(null);
+    }
+  };
+
+  // Handle finish labeling
+  const handleFinish = () => {
+    router.push("/export");
+  };
+
+  // Handle back to gallery
+  const handleBackToGallery = () => {
+    router.push("/gallery");
   };
 
   return (
@@ -639,9 +730,16 @@ export default function Labeling() {
                 width={canvasSize.width}
                 height={canvasSize.height}
                 onClick={handleCanvasClick}
-                onMouseMove={handleMouseMove}
+                onMouseMove={throttledMouseMove}
                 className="border border-gray-300"
-                style={{ cursor: getCanvasCursor() }}
+                style={{
+                  cursor:
+                    currentTool === "select"
+                      ? hoveredLabelIndex !== null
+                        ? "pointer"
+                        : "default"
+                      : "crosshair",
+                }}
               />
               {currentTool === "boundingBox" && boxPosition && (
                 <div
@@ -831,22 +929,31 @@ export default function Labeling() {
                     return (
                       <div
                         key={index}
-                        className="flex items-center justify-between p-2 rounded"
+                        className={cn(
+                          "flex items-center justify-between p-2 rounded cursor-pointer transition-all",
+                          activeLabelIndex === index && "ring-2"
+                        )}
                         style={{
                           backgroundColor: `${color}20`,
                           borderLeft: `4px solid ${color}`,
                         }}
                         onMouseEnter={() => handleLabelHover(index)}
                         onMouseLeave={() => handleLabelHover(null)}
+                        onClick={() => handleBoundingBoxCardClick(index)}
                       >
                         <span className="text-sm font-medium">
                           {label.class}
                         </span>
-                        {hoveredLabelIndex === index && (
+                        {(hoveredLabelIndex === index ||
+                          activeLabelIndex === index) && (
                           <Button
                             variant="destructive"
                             size="sm"
-                            onClick={() => handleLabelDelete(index)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleLabelDelete(index);
+                              setActiveLabelIndex(null);
+                            }}
                           >
                             Delete
                           </Button>
