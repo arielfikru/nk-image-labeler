@@ -24,7 +24,7 @@ export default function Upload() {
         new Promise<{ id: string; name: string; data: string; width: number; height: number }>((resolve) => {
           const reader = new FileReader()
           reader.onload = (e) => {
-            const img = new Image()
+            const img = new window.Image()
             img.onload = () => {
               resolve({
                 id: Math.random().toString(36).substr(2, 9),
@@ -57,7 +57,7 @@ export default function Upload() {
         {isDragActive ? (
           <p>Drop the files here ...</p>
         ) : (
-          <p>Drag 'n' drop some files here, or click to select files</p>
+          <p>Drag &apos;n&apos; drop some files here, or click to select files</p>
         )}
       </div>
       {files.length > 0 && (

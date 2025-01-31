@@ -2,12 +2,11 @@
   "name": "nk-image-labeler",
   "version": "0.1.0",
   "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
-  },
+    "scripts": {
+      "dev": "next dev -p 8300",
+      "build": "next build",
+      "start": "next start -p 8300"
+    },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.1.1",
     "@radix-ui/react-scroll-area": "^1.1.0",

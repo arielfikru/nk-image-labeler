@@ -8,11 +8,11 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import Link from 'next/link'
 import JSZip from 'jszip'
 import { FixedSizeGrid as Grid } from 'react-window'
 import AutoSizer from 'react-virtualized-auto-sizer'
-import { useRouter } from "next/navigation";
+import { useRouter } from "next/navigation"
+import Image from 'next/image'
 
 type ExportFormat = 'image' | 'coco' | 'yolo'
 type DownloadType = 'zip' | 'individual'
@@ -60,7 +60,7 @@ export default function LabeledGallery() {
     return new Promise((resolve) => {
       const canvas = document.createElement('canvas')
       const ctx = canvas.getContext('2d')
-      const image = new Image()
+      const image = new window.Image()
       image.onload = () => {
         canvas.width = img.width
         canvas.height = img.height
@@ -96,16 +96,16 @@ export default function LabeledGallery() {
 
   const generateCOCOData = (images: ImageData[]): string => {
     const cocoData = {
-      images: images.map((img, index) => ({
-        id: index,
+      images: images.map((img) => ({
+        id: parseInt(img.id),
         file_name: img.name,
         width: img.width,
         height: img.height
       })),
-      annotations: images.flatMap((img, imgIndex) => 
+      annotations: images.flatMap((img) => 
         img.labels.map((label, labelIndex) => ({
-          id: imgIndex * 1000 + labelIndex,
-          image_id: imgIndex,
+          id: parseInt(img.id) * 1000 + labelIndex,
+          image_id: parseInt(img.id),
           category_id: 1,
           bbox: [label.x, label.y, label.width, label.height],
           area: label.width * label.height,
@@ -131,10 +131,10 @@ export default function LabeledGallery() {
     const zip = new JSZip()
 
     if (exportFormat === 'image') {
-      await Promise.all(images.map(async (img, imgIndex) => {
+      await Promise.all(images.map(async (img) => {
         const canvas = document.createElement('canvas')
         const ctx = canvas.getContext('2d')
-        const image = new Image()
+        const image = new window.Image()
         await new Promise<void>((resolve) => {
           image.onload = () => resolve()
           image.src = img.data
@@ -172,11 +172,11 @@ export default function LabeledGallery() {
     } else if (exportFormat === 'coco') {
       const cocoData = generateCOCOData(images)
       zip.file('annotations.json', cocoData)
-      images.forEach((img, index) => {
+      images.forEach((img) => {
         zip.file(`images/${img.name}`, img.data.split(',')[1], {base64: true})
       })
     } else if (exportFormat === 'yolo') {
-      images.forEach((img, index) => {
+      images.forEach((img) => {
         const yoloData = generateYOLOData(img)
         zip.file(`labels/${img.name.split('.')[0]}.txt`, yoloData)
         zip.file(`images/${img.name}`, img.data.split(',')[1], {base64: true})
@@ -215,7 +215,15 @@ export default function LabeledGallery() {
       }}>
         <Card className="w-full h-full flex flex-col overflow-hidden">
           <div className="flex-grow relative p-2">
-            <img src={renderedImages[index]} alt={images[index].name} className="absolute inset-0 w-full h-full object-contain" />
+            <div className="relative w-full h-full">
+              <Image 
+                src={renderedImages[index]} 
+                alt={images[index].name} 
+                fill
+                className="object-contain"
+                unoptimized // Since we're using data URLs
+              />
+            </div>
           </div>
           <p className="p-2 text-sm truncate">{images[index].name}</p>
         </Card>
@@ -223,7 +231,7 @@ export default function LabeledGallery() {
     )
   }
 
-  const handleBack= () => {
+  const handleBack = () => {
     router.push("/labeling");
   };
 

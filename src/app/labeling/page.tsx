@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import { useRouter } from "next/navigation";
+import Image from 'next/image';
 import { RootState } from "@/store";
 import { updateLabels, setCurrentImageIndex } from "@/store/imagesSlice";
 import { Button } from "@/components/ui/button";
@@ -96,43 +97,12 @@ export default function Labeling() {
     return () => window.removeEventListener("wheel", handleWheel);
   }, [canvasSize]);
 
-  useEffect(() => {
-    drawImageAndLabels();
-  }, [currentIndex, images, canvasSize, hoveredLabelIndex]);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Control') {
-        setIsCtrlPressed(true);
-      } else if (e.key === 'Shift') {
-        setIsShiftPressed(true);
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Control') {
-        setIsCtrlPressed(false);
-        setLastMousePosition(null);
-      } else if (e.key === 'Shift') {
-        setIsShiftPressed(false);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, []);
-
-  const drawImageAndLabels = () => {
+  const drawImageAndLabels = useCallback(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
 
     if (canvas && ctx && images[currentIndex]) {
-      const img = new Image();
+      const img = new window.Image()
       img.onload = () => {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -182,7 +152,38 @@ export default function Labeling() {
       };
       img.src = images[currentIndex].data;
     }
-  };
+  }, [currentIndex, images, hoveredLabelIndex]);
+
+  useEffect(() => {
+    drawImageAndLabels();
+  }, [drawImageAndLabels]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Control') {
+        setIsCtrlPressed(true);
+      } else if (e.key === 'Shift') {
+        setIsShiftPressed(true);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Control') {
+        setIsCtrlPressed(false);
+        setLastMousePosition(null);
+      } else if (e.key === 'Shift') {
+        setIsShiftPressed(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
 
   const getColorForLabel = (index: number) => {
     const colors = ['blue', 'red', 'green', 'yellow', 'purple', 'orange'];
@@ -360,11 +361,15 @@ export default function Labeling() {
                     }`}
                     onClick={() => handleImageSelect(index)}
                   >
-                    <img
-                      src={img.data}
-                      alt={img.name}
-                      className="absolute inset-0 w-full h-full object-cover"
-                    />
+                    <div className="relative w-full h-full">
+                      <Image
+                        src={img.data}
+                        alt={img.name}
+                        fill
+                        className="object-cover"
+                        unoptimized // Since we're using data URLs
+                      />
+                    </div>
                     {img.labels.length > 0 && (
                       <div className="absolute inset-0 border-2 border-green-500 pointer-events-none" />
                     )}

@@ -9,18 +9,26 @@ import { Card } from "@/components/ui/card"
 import Link from 'next/link'
 import { FixedSizeGrid as Grid } from 'react-window'
 import AutoSizer from 'react-virtualized-auto-sizer'
+import Image from 'next/image'
+import { useRouter } from 'next/navigation'
 
 export default function Gallery() {
   const images = useSelector((state: RootState) => state.images.images)
   const dispatch = useDispatch()
+  const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Simulate loading time
-    const timer = setTimeout(() => setLoading(false), 500)
+    const timer = setTimeout(() => {
+      setLoading(false)
+      // Redirect to import if no images
+      if (!loading && images.length === 0) {
+        router.push('/import')
+      }
+    }, 500)
     return () => clearTimeout(timer)
-  }, [])
+  }, [loading, images.length, router])
 
   const handleDelete = (id: string) => {
     dispatch(deleteImage(id))
@@ -34,7 +42,7 @@ export default function Gallery() {
         return new Promise<{ id: string; name: string; data: string; width: number; height: number }>((resolve) => {
           const reader = new FileReader()
           reader.onload = (e) => {
-            const img = new Image()
+            const img = new window.Image()
             img.onload = () => {
               resolve({
                 id: Math.random().toString(36).substr(2, 9),
@@ -76,7 +84,15 @@ export default function Gallery() {
         <Card className="relative overflow-hidden h-full">
           <div className="relative w-full h-full">
             <div className="absolute inset-0 p-2">
-              <img src={image.data} alt={image.name} className="w-full h-full object-contain" />
+              <div className="relative w-full h-full">
+                <Image 
+                  src={image.data} 
+                  alt={image.name} 
+                  fill
+                  className="object-contain"
+                  unoptimized // Since we're using data URLs
+                />
+              </div>
             </div>
           </div>
           <Button 
@@ -93,43 +109,39 @@ export default function Gallery() {
     )
   }
 
+  // Show loading state while checking images
+  if (loading) {
+    return (
+      <div className="container mx-auto p-4">
+        <h1 className="text-2xl font-bold mb-4">Image Gallery</h1>
+        <div className="flex justify-center items-center h-64">
+          <p className="text-xl">Loading Images...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4">Image Gallery</h1>
       <div className="flex flex-col md:flex-row">
         <div className="md:w-2/3 pr-4">
-          {loading ? (
-            <div className="flex justify-center items-center h-64">
-              <p className="text-xl">Loading Images...</p>
-            </div>
-          ) : images.length === 0 ? (
-            <div className="flex flex-col justify-center items-center h-64 bg-gray-100 rounded-lg">
-              <p className="text-xl mb-4">No images uploaded yet</p>
-              <Button 
-                variant="outline" 
-                onClick={() => fileInputRef.current?.click()}
-              >
-                Upload Images
-              </Button>
-            </div>
-          ) : (
-            <div style={{ height: 'calc(100vh - 200px)' }}>
-              <AutoSizer>
-                {({ height, width }) => (
-                  <Grid
-                    columnCount={3}
-                    columnWidth={(width - 32) / 3}
-                    height={height}
-                    rowCount={Math.ceil(images.length / 3)}
-                    rowHeight={(width - 32) / 3}
-                    width={width}
-                  >
-                    {ImageCell}
-                  </Grid>
-                )}
-              </AutoSizer>
-            </div>
-          )}
+          <div style={{ height: 'calc(100vh - 200px)' }}>
+            <AutoSizer>
+              {({ height, width }) => (
+                <Grid
+                  columnCount={3}
+                  columnWidth={(width - 32) / 3}
+                  height={height}
+                  rowCount={Math.ceil(images.length / 3)}
+                  rowHeight={(width - 32) / 3}
+                  width={width}
+                >
+                  {ImageCell}
+                </Grid>
+              )}
+            </AutoSizer>
+          </div>
         </div>
         <div className="md:w-1/3 mt-4 md:mt-0">
           <Card className="p-4">
